@@ -1,125 +1,184 @@
 import { defineConfig } from "vite";
-import { resolve, dirname, relative } from "node:path";
+import { readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import fg from "fast-glob";
 
-const rootDir = resolve(__dirname, "src");
+const rootDir = path.resolve(__dirname, "src");
+const distDir = path.resolve(__dirname, "dist");
 
-function createHtmlInputs() {
-  const htmlFiles = fg.sync("**/index.html", {
+function normalizePath(filePath) {
+  return filePath.replaceAll("\\", "/");
+}
+
+function removeLeadingSlash(value) {
+  return value.replace(/^\/+/, "");
+}
+
+function resolveHtmlReference(htmlFile, reference) {
+  const cleanReference = reference.split(/[?#]/)[0];
+
+  if (cleanReference.startsWith("/")) {
+    return removeLeadingSlash(cleanReference);
+  }
+
+  return normalizePath(path.join(path.dirname(htmlFile), cleanReference));
+}
+
+function getAttributeValue(tag, attributeName) {
+  const pattern = new RegExp(`${attributeName}\\s*=\\s*["']([^"']+)["']`, "i");
+  return tag.match(pattern)?.[1];
+}
+
+function toPageName(htmlFile) {
+  const pageDir = path.dirname(htmlFile);
+  return pageDir === "." ? "index" : normalizePath(pageDir);
+}
+
+function cssOutputFileName(cssFile) {
+  const normalized = normalizePath(cssFile);
+  const match = normalized.match(/^assets\/(?:s[ac]ss)\/(.+)\.(?:s[ac]ss)$/);
+
+  if (match) {
+    return `assets/css/${match[1]}.css`;
+  }
+
+  return `assets/css/${path.basename(normalized, path.extname(normalized))}.css`;
+}
+
+function jsOutputFileName(jsFile) {
+  const normalized = normalizePath(jsFile);
+  const match = normalized.match(/^assets\/js\/(.+)$/);
+
+  if (match) {
+    return `assets/js/${match[1]}`;
+  }
+
+  return `assets/js/${path.basename(normalized)}`;
+}
+
+function createPageEntries() {
+  const htmlFiles = fg.sync("**/*.html", {
     cwd: rootDir,
+    onlyFiles: true,
   });
 
+  return htmlFiles.map((htmlFile) => {
+    const source = readFileSync(path.resolve(rootDir, htmlFile), "utf8");
+    const stylesheetTags = source.match(/<link\b[^>]*rel=["']stylesheet["'][^>]*>/gi) ?? [];
+    const moduleScriptTags =
+      source.match(/<script\b[^>]*type=["']module["'][^>]*src=["'][^"']+["'][^>]*>\s*<\/script>/gi) ?? [];
+
+    const cssFiles = stylesheetTags
+      .map((tag) => getAttributeValue(tag, "href"))
+      .filter((href) => href && /\.(s[ac]ss)(?:[?#].*)?$/i.test(href))
+      .map((href) => resolveHtmlReference(htmlFile, href));
+
+    const jsFiles = moduleScriptTags
+      .map((tag) => getAttributeValue(tag, "src"))
+      .filter((src) => src && /\.js(?:[?#].*)?$/i.test(src))
+      .map((src) => resolveHtmlReference(htmlFile, src));
+
+    return {
+      htmlFile,
+      pageName: toPageName(htmlFile),
+      jsOutput: jsFiles[0] ? jsOutputFileName(jsFiles[0]) : undefined,
+      cssOutputs: cssFiles.map(cssOutputFileName),
+    };
+  });
+}
+
+function createHtmlInputs(pageEntries) {
   return Object.fromEntries(
-    htmlFiles.map((file) => {
-      const name = file.replace(/\/index\.html$/, "") || "index";
-      return [name, resolve(rootDir, file)];
-    }),
+    pageEntries.map((entry) => [entry.pageName, path.resolve(rootDir, entry.htmlFile)]),
   );
 }
 
-function normalizePath(path) {
-  return path.replaceAll("\\", "/");
-}
+function mpaAssetLayoutPlugin(pageEntries) {
+  const entryByPageName = new Map(pageEntries.map((entry) => [entry.pageName, entry]));
+  const cssRenameMap = new Map();
 
-function getPageDirFromJsPath(facadeModuleId) {
-  if (!facadeModuleId) return "";
-
-  const normalized = normalizePath(facadeModuleId);
-
-  // /src/assets/js/main.js -> ""
-  // /src/assets/js/sub/main.js -> "sub"
-  // /src/assets/js/sub2/main.js -> "sub2"
-  const match = normalized.match(/\/assets\/js\/(.+)\/main\.js$/);
-
-  if (match) {
-    return match[1];
-  }
-
-  return "";
-}
-
-function renameCssPlugin() {
   return {
-    name: "rename-css-by-entry",
+    name: "mpa-asset-layout",
 
     generateBundle(_, bundle) {
-      const cssRenameMap = new Map();
+      cssRenameMap.clear();
 
       for (const item of Object.values(bundle)) {
-        if (item.type !== "chunk") continue;
-        if (!item.isEntry) continue;
-
-        const pageDir = getPageDirFromJsPath(item.facadeModuleId);
-
-        // JSの出力先を調整
-        if (pageDir) {
-          item.fileName = `assets/js/${pageDir}/main.js`;
-        } else {
-          item.fileName = "assets/js/main.js";
+        if (item.type !== "asset" || !item.fileName.endsWith(".css")) {
+          continue;
         }
 
-        // このJSエントリーに紐づくCSSを探す
-        const importedCss = item.viteMetadata?.importedCss;
+        const pageName = path.basename(item.fileName, ".css");
+        const entry = entryByPageName.get(pageName);
+        const cssOutput = entry?.cssOutputs[0];
 
-        if (!importedCss) continue;
-
-        for (const cssFileName of importedCss) {
-          const newCssFileName = pageDir ? `assets/css/${pageDir}/style.css` : "assets/css/style.css";
-
-          cssRenameMap.set(cssFileName, newCssFileName);
+        if (cssOutput) {
+          cssRenameMap.set(item.fileName, cssOutput);
+          item.fileName = cssOutput;
         }
       }
 
-      // CSS asset自体のfileNameを変更
       for (const item of Object.values(bundle)) {
-        if (item.type !== "asset") continue;
-
-        const newFileName = cssRenameMap.get(item.fileName);
-
-        if (newFileName) {
-          item.fileName = newFileName;
+        if (item.type !== "asset" || !item.fileName.endsWith(".html") || typeof item.source !== "string") {
+          continue;
         }
-      }
-
-      // HTML内の参照パスを置換
-      for (const item of Object.values(bundle)) {
-        if (item.type !== "asset") continue;
-        if (!item.fileName.endsWith(".html")) continue;
-        if (typeof item.source !== "string") continue;
 
         for (const [oldFileName, newFileName] of cssRenameMap) {
-          const oldPath = oldFileName.replace(/^assets\//, "/assets/");
-          const newPath = newFileName.replace(/^assets\//, "/assets/");
-
-          item.source = item.source.replaceAll(oldFileName, newFileName).replaceAll(oldPath, newPath);
+          item.source = item.source.replaceAll(oldFileName, newFileName);
         }
+      }
+    },
+
+    writeBundle() {
+      const htmlFiles = fg.sync("**/*.html", {
+        cwd: distDir,
+        onlyFiles: true,
+      });
+
+      for (const htmlFile of htmlFiles) {
+        const filePath = path.resolve(distDir, htmlFile);
+        let source = readFileSync(filePath, "utf8");
+
+        for (const [oldFileName, newFileName] of cssRenameMap) {
+          source = source.replaceAll(oldFileName, newFileName);
+        }
+
+        writeFileSync(filePath, source);
       }
     },
   };
 }
 
+const pageEntries = createPageEntries();
+const entryByPageName = new Map(pageEntries.map((entry) => [entry.pageName, entry]));
+
 export default defineConfig({
   root: "src",
   base: "./",
+  server: {
+    host: "0.0.0.0",
+  },
 
-  plugins: [renameCssPlugin()],
+  plugins: [mpaAssetLayoutPlugin(pageEntries)],
 
   build: {
     outDir: "../dist",
     emptyOutDir: true,
     assetsDir: "assets",
     cssCodeSplit: true,
-
-    // modulepreload-polyfill.js が不要なら消せます
     modulePreload: {
       polyfill: false,
     },
 
     rollupOptions: {
-      input: createHtmlInputs(),
+      input: createHtmlInputs(pageEntries),
 
       output: {
-        entryFileNames: "assets/js/[name].js",
+        entryFileNames: (chunkInfo) => {
+          const entry = entryByPageName.get(chunkInfo.name);
+
+          return entry?.jsOutput ?? "assets/js/[name].js";
+        },
         chunkFileNames: "assets/js/chunks/[name].js",
 
         assetFileNames: (assetInfo) => {
@@ -131,11 +190,6 @@ export default defineConfig({
 
           if (/\.(ttf|otf|eot|woff|woff2)$/i.test(name)) {
             return "assets/fonts/[name][extname]";
-          }
-
-          // CSSはplugin側でリネームする
-          if (/\.css$/i.test(name)) {
-            return "assets/[name][extname]";
           }
 
           return "assets/[name][extname]";

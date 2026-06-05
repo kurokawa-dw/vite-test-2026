@@ -47,6 +47,18 @@ function cssOutputFileName(cssFile) {
   return `assets/css/${path.basename(normalized, path.extname(normalized))}.css`;
 }
 
+function cssOutputCandidates(cssFile) {
+  const normalized = normalizePath(cssFile);
+  const candidates = [cssOutputFileName(normalized)];
+  const topLevelScss = normalized.match(/^assets\/(?:s[ac]ss)\/([^/]+)\.(?:s[ac]ss)$/);
+
+  if (topLevelScss) {
+    candidates.push(`assets/${topLevelScss[1]}.css`);
+  }
+
+  return [...new Set(candidates)];
+}
+
 function jsOutputFileName(jsFile) {
   const normalized = normalizePath(jsFile);
   const match = normalized.match(/^assets\/js\/(.+)$/);
@@ -85,6 +97,7 @@ function createPageEntries() {
       htmlFile,
       pageName: toPageName(htmlFile),
       jsOutput: jsFiles[0] ? jsOutputFileName(jsFiles[0]) : undefined,
+      cssFiles,
       cssOutputs: cssFiles.map(cssOutputFileName),
     };
   });
@@ -94,8 +107,66 @@ function createHtmlInputs(pageEntries) {
   return Object.fromEntries(pageEntries.map((entry) => [entry.pageName, path.resolve(rootDir, entry.htmlFile)]));
 }
 
+function getCssLinkOrder(entry) {
+  return entry.cssFiles.flatMap(cssOutputCandidates);
+}
+
+function getHtmlCssLinkFileName(linkTag) {
+  const href = getAttributeValue(linkTag, "href");
+
+  return href ? removeLeadingSlash(href.split(/[?#]/)[0]) : "";
+}
+
+function reorderCssLinks(source, entry) {
+  const order = getCssLinkOrder(entry);
+  const orderIndex = new Map(order.map((fileName, index) => [fileName, index]));
+  const linkPattern = /^[ \t]*<link\b(?=[^>]*rel=["']stylesheet["'])(?=[^>]*href=["'][^"']+\.css(?:[?#][^"']*)?["'])[^>]*>[ \t]*\r?\n?/gim;
+  const links = [...source.matchAll(linkPattern)].map((match, index) => ({
+    index,
+    start: match.index,
+    end: match.index + match[0].length,
+    tag: match[0],
+    fileName: getHtmlCssLinkFileName(match[0]),
+  }));
+
+  const sortableLinks = links.filter((link) => orderIndex.has(link.fileName));
+
+  if (sortableLinks.length < 2) {
+    return source;
+  }
+
+  const sortedTags = [...sortableLinks]
+    .sort((a, b) => orderIndex.get(a.fileName) - orderIndex.get(b.fileName) || a.index - b.index)
+    .map((link) => link.tag.trimEnd())
+    .join("\n");
+  const removable = new Set(sortableLinks);
+  let result = "";
+  let cursor = 0;
+  let inserted = false;
+
+  for (const link of links) {
+    if (!removable.has(link)) {
+      continue;
+    }
+
+    result += source.slice(cursor, link.start);
+
+    if (!inserted) {
+      result += `${sortedTags}\n`;
+      inserted = true;
+    }
+
+    cursor = link.end;
+  }
+
+  result += source.slice(cursor);
+
+  return result;
+}
+
 function mpaAssetLayoutPlugin(pageEntries) {
   const entryByPageName = new Map(pageEntries.map((entry) => [entry.pageName, entry]));
+  const entryByHtmlFile = new Map(pageEntries.map((entry) => [entry.htmlFile, entry]));
   const cssRenameMap = new Map();
 
   return {
@@ -127,6 +198,12 @@ function mpaAssetLayoutPlugin(pageEntries) {
         for (const [oldFileName, newFileName] of cssRenameMap) {
           item.source = item.source.replaceAll(oldFileName, newFileName);
         }
+
+        const entry = entryByHtmlFile.get(item.fileName);
+
+        if (entry) {
+          item.source = reorderCssLinks(item.source, entry);
+        }
       }
     },
 
@@ -142,6 +219,12 @@ function mpaAssetLayoutPlugin(pageEntries) {
 
         for (const [oldFileName, newFileName] of cssRenameMap) {
           source = source.replaceAll(oldFileName, newFileName);
+        }
+
+        const entry = entryByHtmlFile.get(htmlFile);
+
+        if (entry) {
+          source = reorderCssLinks(source, entry);
         }
 
         writeFileSync(filePath, source);

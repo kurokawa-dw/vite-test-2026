@@ -62,7 +62,7 @@ function createPageEntries() {
   const htmlFiles = fg.sync("**/*.html", {
     cwd: rootDir,
     onlyFiles: true,
-    ignore: ["component/**/*.html"],
+    ignore: ["components/**/*.html"],
   });
 
   return htmlFiles.map((htmlFile) => {
@@ -155,7 +155,8 @@ const entryByPageName = new Map(pageEntries.map((entry) => [entry.pageName, entr
 
 export default defineConfig({
   root: "src",
-  base: "./",
+  publicDir: path.resolve(__dirname, "public"),
+  base: "/",
   server: {
     host: "0.0.0.0",
   },

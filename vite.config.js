@@ -1,5 +1,6 @@
 import { defineConfig } from "vite";
 import vue from "@vitejs/plugin-vue";
+import handlebars from "vite-plugin-handlebars";
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import fg from "fast-glob";
@@ -61,6 +62,7 @@ function createPageEntries() {
   const htmlFiles = fg.sync("**/*.html", {
     cwd: rootDir,
     onlyFiles: true,
+    ignore: ["component/**/*.html"],
   });
 
   return htmlFiles.map((htmlFile) => {
@@ -89,9 +91,7 @@ function createPageEntries() {
 }
 
 function createHtmlInputs(pageEntries) {
-  return Object.fromEntries(
-    pageEntries.map((entry) => [entry.pageName, path.resolve(rootDir, entry.htmlFile)]),
-  );
+  return Object.fromEntries(pageEntries.map((entry) => [entry.pageName, path.resolve(rootDir, entry.htmlFile)]));
 }
 
 function mpaAssetLayoutPlugin(pageEntries) {
@@ -160,7 +160,13 @@ export default defineConfig({
     host: "0.0.0.0",
   },
 
-  plugins: [vue(), mpaAssetLayoutPlugin(pageEntries)],
+  plugins: [
+    handlebars({
+      partialDirectory: path.resolve(rootDir, "components"),
+    }),
+    vue(),
+    mpaAssetLayoutPlugin(pageEntries),
+  ],
 
   build: {
     outDir: "../dist",

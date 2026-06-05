@@ -7,6 +7,7 @@ import fg from "fast-glob";
 
 const rootDir = path.resolve(__dirname, "src");
 const distDir = path.resolve(__dirname, "dist");
+const dir = "path/path2/";
 
 function normalizePath(filePath) {
   return filePath.replaceAll("\\", "/");
@@ -15,6 +16,16 @@ function normalizePath(filePath) {
 function removeLeadingSlash(value) {
   return value.replace(/^\/+/, "");
 }
+
+function removeTrailingSlash(value) {
+  return value.replace(/\/+$/, "");
+}
+
+function normalizeOutputDir(value) {
+  return removeTrailingSlash(removeLeadingSlash(normalizePath(value)));
+}
+
+const assetOutputDir = normalizeOutputDir(dir);
 
 function resolveHtmlReference(htmlFile, reference) {
   const cleanReference = reference.split(/[?#]/)[0];
@@ -36,24 +47,32 @@ function toPageName(htmlFile) {
   return pageDir === "." ? "index" : normalizePath(pageDir);
 }
 
-function cssOutputFileNameForPage(htmlFile) {
+function getAssetOutputPathForPage(htmlFile, assetType, fileName) {
   const pageDir = path.dirname(htmlFile);
 
-  if (pageDir === ".") {
-    return "assets/css/style.css";
+  if (assetOutputDir && (pageDir === assetOutputDir || pageDir.startsWith(`${assetOutputDir}/`))) {
+    const relativePageDir = normalizePath(path.relative(assetOutputDir, pageDir));
+
+    if (!relativePageDir || relativePageDir === ".") {
+      return `${assetOutputDir}/assets/${assetType}/${fileName}`;
+    }
+
+    return `${assetOutputDir}/assets/${assetType}/${relativePageDir}/${fileName}`;
   }
 
-  return `assets/css/${normalizePath(pageDir)}/style.css`;
+  if (pageDir === ".") {
+    return `assets/${assetType}/${fileName}`;
+  }
+
+  return `assets/${assetType}/${normalizePath(pageDir)}/${fileName}`;
+}
+
+function cssOutputFileNameForPage(htmlFile) {
+  return getAssetOutputPathForPage(htmlFile, "css", "style.css");
 }
 
 function jsOutputFileNameForPage(htmlFile) {
-  const pageDir = path.dirname(htmlFile);
-
-  if (pageDir === ".") {
-    return "assets/js/script.js";
-  }
-
-  return `assets/js/${normalizePath(pageDir)}/script.js`;
+  return getAssetOutputPathForPage(htmlFile, "js", "script.js");
 }
 
 function createPageEntries() {

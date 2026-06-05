@@ -1,7 +1,7 @@
 import { defineConfig } from "vite";
 import vue from "@vitejs/plugin-vue";
 import handlebars from "vite-plugin-handlebars";
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import fg from "fast-glob";
 
@@ -36,27 +36,14 @@ function toPageName(htmlFile) {
   return pageDir === "." ? "index" : normalizePath(pageDir);
 }
 
-function cssOutputFileName(cssFile) {
-  const normalized = normalizePath(cssFile);
-  const match = normalized.match(/^assets\/(?:s[ac]ss)\/(.+)\.(?:s[ac]ss)$/);
+function cssOutputFileNameForPage(htmlFile) {
+  const pageDir = path.dirname(htmlFile);
 
-  if (match) {
-    return `assets/css/${match[1]}.css`;
+  if (pageDir === ".") {
+    return "assets/css/style.css";
   }
 
-  return `assets/css/${path.basename(normalized, path.extname(normalized))}.css`;
-}
-
-function cssOutputCandidates(cssFile) {
-  const normalized = normalizePath(cssFile);
-  const candidates = [cssOutputFileName(normalized)];
-  const topLevelScss = normalized.match(/^assets\/(?:s[ac]ss)\/([^/]+)\.(?:s[ac]ss)$/);
-
-  if (topLevelScss) {
-    candidates.push(`assets/${topLevelScss[1]}.css`);
-  }
-
-  return [...new Set(candidates)];
+  return `assets/css/${normalizePath(pageDir)}/style.css`;
 }
 
 function jsOutputFileName(jsFile) {
@@ -98,7 +85,7 @@ function createPageEntries() {
       pageName: toPageName(htmlFile),
       jsOutput: jsFiles[0] ? jsOutputFileName(jsFiles[0]) : undefined,
       cssFiles,
-      cssOutputs: cssFiles.map(cssOutputFileName),
+      cssOutput: cssOutputFileNameForPage(htmlFile),
     };
   });
 }
@@ -107,52 +94,45 @@ function createHtmlInputs(pageEntries) {
   return Object.fromEntries(pageEntries.map((entry) => [entry.pageName, path.resolve(rootDir, entry.htmlFile)]));
 }
 
-function getCssLinkOrder(entry) {
-  return entry.cssFiles.flatMap(cssOutputCandidates);
-}
-
 function getHtmlCssLinkFileName(linkTag) {
   const href = getAttributeValue(linkTag, "href");
 
   return href ? removeLeadingSlash(href.split(/[?#]/)[0]) : "";
 }
 
-function reorderCssLinks(source, entry) {
-  const order = getCssLinkOrder(entry);
-  const orderIndex = new Map(order.map((fileName, index) => [fileName, index]));
+function getHtmlCssLinks(source) {
   const linkPattern = /^[ \t]*<link\b(?=[^>]*rel=["']stylesheet["'])(?=[^>]*href=["'][^"']+\.css(?:[?#][^"']*)?["'])[^>]*>[ \t]*\r?\n?/gim;
-  const links = [...source.matchAll(linkPattern)].map((match, index) => ({
+
+  return [...source.matchAll(linkPattern)].map((match, index) => ({
     index,
     start: match.index,
     end: match.index + match[0].length,
     tag: match[0],
     fileName: getHtmlCssLinkFileName(match[0]),
   }));
+}
 
-  const sortableLinks = links.filter((link) => orderIndex.has(link.fileName));
-
-  if (sortableLinks.length < 2) {
+function replaceGeneratedCssLinks(source, generatedLinks, outputFileName) {
+  if (generatedLinks.length === 0) {
     return source;
   }
 
-  const sortedTags = [...sortableLinks]
-    .sort((a, b) => orderIndex.get(a.fileName) - orderIndex.get(b.fileName) || a.index - b.index)
-    .map((link) => link.tag.trimEnd())
-    .join("\n");
-  const removable = new Set(sortableLinks);
+  const links = getHtmlCssLinks(source);
+  const removable = new Set(generatedLinks.map((link) => link.fileName));
   let result = "";
   let cursor = 0;
   let inserted = false;
 
   for (const link of links) {
-    if (!removable.has(link)) {
+    if (!removable.has(link.fileName)) {
       continue;
     }
 
     result += source.slice(cursor, link.start);
 
     if (!inserted) {
-      result += `${sortedTags}\n`;
+      const indent = link.tag.match(/^[ \t]*/)?.[0] ?? "";
+      result += `${indent}<link rel="stylesheet" crossorigin href="/${outputFileName}">\n`;
       inserted = true;
     }
 
@@ -165,69 +145,73 @@ function reorderCssLinks(source, entry) {
 }
 
 function mpaAssetLayoutPlugin(pageEntries) {
-  const entryByPageName = new Map(pageEntries.map((entry) => [entry.pageName, entry]));
   const entryByHtmlFile = new Map(pageEntries.map((entry) => [entry.htmlFile, entry]));
-  const cssRenameMap = new Map();
+  const pageCssOutputs = new Set(pageEntries.map((entry) => entry.cssOutput));
+  const generatedCssFiles = new Set();
 
   return {
     name: "mpa-asset-layout",
 
     generateBundle(_, bundle) {
-      cssRenameMap.clear();
+      generatedCssFiles.clear();
 
       for (const item of Object.values(bundle)) {
-        if (item.type !== "asset" || !item.fileName.endsWith(".css")) {
-          continue;
-        }
-
-        const pageName = path.basename(item.fileName, ".css");
-        const entry = entryByPageName.get(pageName);
-        const cssOutput = entry?.cssOutputs.at(-1);
-
-        if (cssOutput) {
-          cssRenameMap.set(item.fileName, cssOutput);
-          item.fileName = cssOutput;
-        }
-      }
-
-      for (const item of Object.values(bundle)) {
-        if (item.type !== "asset" || !item.fileName.endsWith(".html") || typeof item.source !== "string") {
-          continue;
-        }
-
-        for (const [oldFileName, newFileName] of cssRenameMap) {
-          item.source = item.source.replaceAll(oldFileName, newFileName);
-        }
-
-        const entry = entryByHtmlFile.get(item.fileName);
-
-        if (entry) {
-          item.source = reorderCssLinks(item.source, entry);
+        if (item.type === "asset" && item.fileName.endsWith(".css")) {
+          generatedCssFiles.add(item.fileName);
         }
       }
     },
 
     writeBundle() {
+      const usedCssFiles = new Set();
       const htmlFiles = fg.sync("**/*.html", {
         cwd: distDir,
         onlyFiles: true,
       });
 
       for (const htmlFile of htmlFiles) {
-        const filePath = path.resolve(distDir, htmlFile);
-        let source = readFileSync(filePath, "utf8");
-
-        for (const [oldFileName, newFileName] of cssRenameMap) {
-          source = source.replaceAll(oldFileName, newFileName);
-        }
-
         const entry = entryByHtmlFile.get(htmlFile);
 
-        if (entry) {
-          source = reorderCssLinks(source, entry);
+        if (!entry) {
+          continue;
         }
 
-        writeFileSync(filePath, source);
+        const htmlPath = path.resolve(distDir, htmlFile);
+        let htmlSource = readFileSync(htmlPath, "utf8");
+        const links = getHtmlCssLinks(htmlSource);
+        const generatedLinks = links.filter((link) => generatedCssFiles.has(link.fileName));
+
+        if (generatedLinks.length === 0) {
+          continue;
+        }
+
+        const cssSource = generatedLinks
+          .map((link) => {
+            const cssPath = path.resolve(distDir, link.fileName);
+            usedCssFiles.add(link.fileName);
+
+            return readFileSync(cssPath, "utf8");
+          })
+          .join("\n");
+        const outputPath = path.resolve(distDir, entry.cssOutput);
+
+        mkdirSync(path.dirname(outputPath), { recursive: true });
+        writeFileSync(outputPath, cssSource);
+
+        htmlSource = replaceGeneratedCssLinks(htmlSource, generatedLinks, entry.cssOutput);
+        writeFileSync(htmlPath, htmlSource);
+      }
+
+      for (const fileName of usedCssFiles) {
+        if (pageCssOutputs.has(fileName)) {
+          continue;
+        }
+
+        const filePath = path.resolve(distDir, fileName);
+
+        if (existsSync(filePath)) {
+          unlinkSync(filePath);
+        }
       }
     },
   };

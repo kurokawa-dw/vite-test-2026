@@ -16,6 +16,7 @@
     "vite-plugin-handlebars": "^2.0.3"
   },
   "dependencies": {
+    "swiper": "^12.2.0",
     "vue": "^3.5.35"
   }
 }

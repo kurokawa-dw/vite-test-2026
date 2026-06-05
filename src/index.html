@@ -13,10 +13,32 @@
 
   <!--#include virtual="/include/header.html" -->
   <main>
+    <div id="app"></div>
     <h1>LP本文</h1>
+
+    <section class="sample-slider" aria-label="Swiper sample">
+      <div class="swiper js-sample-swiper">
+        <div class="swiper-wrapper">
+          <div class="swiper-slide sample-slider__slide sample-slider__slide--blue">
+            <span>Slide 01</span>
+          </div>
+          <div class="swiper-slide sample-slider__slide sample-slider__slide--green">
+            <span>Slide 02</span>
+          </div>
+          <div class="swiper-slide sample-slider__slide sample-slider__slide--coral">
+            <span>Slide 03</span>
+          </div>
+        </div>
+
+        <div class="swiper-pagination"></div>
+        <button class="swiper-button-prev" type="button" aria-label="Previous slide"></button>
+        <button class="swiper-button-next" type="button" aria-label="Next slide"></button>
+      </div>
+    </section>
   </main>
 
   <!--#include virtual="/include/footer.html" -->
+  <script type="module" src="./assets/js/main.js"></script>
 </body>
 
 </html>

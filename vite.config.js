@@ -4,10 +4,10 @@ import handlebars from "vite-plugin-handlebars";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import fg from "fast-glob";
+import { dir } from "./asset-output.config.js";
 
 const rootDir = path.resolve(__dirname, "src");
 const distDir = path.resolve(__dirname, "dist");
-const dir = "path/path2/";
 
 function normalizePath(filePath) {
   return filePath.replaceAll("\\", "/");

@@ -294,3 +294,61 @@ code {
     border-right-color: var(--border);
   }
 }
+
+main {
+  width: min(960px, calc(100% - 40px));
+  margin: 0 auto;
+  padding: 48px 0;
+}
+
+.sample-slider {
+  margin-top: 32px;
+}
+
+.sample-slider .swiper {
+  width: 100%;
+  padding-bottom: 44px;
+}
+
+.sample-slider__slide {
+  display: grid;
+  place-items: center;
+  min-height: 360px;
+  border-radius: 8px;
+  color: #fff;
+  font-size: 40px;
+  font-weight: 700;
+}
+
+.sample-slider__slide--blue {
+  background: linear-gradient(135deg, #2563eb, #14b8a6);
+}
+
+.sample-slider__slide--green {
+  background: linear-gradient(135deg, #15803d, #84cc16);
+}
+
+.sample-slider__slide--coral {
+  background: linear-gradient(135deg, #e11d48, #f97316);
+}
+
+.sample-slider .swiper-button-prev,
+.sample-slider .swiper-button-next {
+  color: #fff;
+}
+
+.sample-slider .swiper-pagination-bullet-active {
+  background: var(--accent);
+}
+
+@media (max-width: 640px) {
+  main {
+    width: min(100% - 32px, 960px);
+    padding: 32px 0;
+  }
+
+  .sample-slider__slide {
+    min-height: 240px;
+    font-size: 28px;
+  }
+}

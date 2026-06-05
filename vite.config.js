@@ -1,4 +1,5 @@
 import { defineConfig } from "vite";
+import vue from "@vitejs/plugin-vue";
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import fg from "fast-glob";
@@ -159,7 +160,7 @@ export default defineConfig({
     host: "0.0.0.0",
   },
 
-  plugins: [mpaAssetLayoutPlugin(pageEntries)],
+  plugins: [vue(), mpaAssetLayoutPlugin(pageEntries)],
 
   build: {
     outDir: "../dist",

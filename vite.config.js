@@ -111,7 +111,7 @@ function mpaAssetLayoutPlugin(pageEntries) {
 
         const pageName = path.basename(item.fileName, ".css");
         const entry = entryByPageName.get(pageName);
-        const cssOutput = entry?.cssOutputs[0];
+        const cssOutput = entry?.cssOutputs.at(-1);
 
         if (cssOutput) {
           cssRenameMap.set(item.fileName, cssOutput);

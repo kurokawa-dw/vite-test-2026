@@ -27,6 +27,36 @@ function normalizeOutputDir(value) {
 
 const assetOutputDir = normalizeOutputDir(dir);
 
+function simpleSSI() {
+  let publicDir = path.resolve(__dirname, "public");
+
+  return {
+    name: "simple-ssi",
+    apply: "serve",
+
+    configResolved(config) {
+      publicDir = config.publicDir;
+    },
+
+    transformIndexHtml(html) {
+      return html.replace(/<!--#include\s+(?:virtual|file)=["'](.+?)["']\s*-->/g, (_, includePath) => {
+        const normalizedPath = removeLeadingSlash(includePath.split(/[?#]/)[0]);
+        const filePath = path.resolve(publicDir, normalizedPath);
+
+        if (!filePath.startsWith(`${publicDir}${path.sep}`) && filePath !== publicDir) {
+          return `<!-- SSI include not found: ${includePath} -->`;
+        }
+
+        if (!existsSync(filePath)) {
+          return `<!-- SSI include not found: ${includePath} -->`;
+        }
+
+        return readFileSync(filePath, "utf8");
+      });
+    },
+  };
+}
+
 function resolveHtmlReference(htmlFile, reference) {
   const cleanReference = reference.split(/[?#]/)[0];
 
@@ -248,6 +278,7 @@ export default defineConfig({
   },
 
   plugins: [
+    simpleSSI(),
     handlebars({
       partialDirectory: path.resolve(rootDir, "components"),
     }),

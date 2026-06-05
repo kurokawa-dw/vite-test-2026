@@ -46,15 +46,14 @@ function cssOutputFileNameForPage(htmlFile) {
   return `assets/css/${normalizePath(pageDir)}/style.css`;
 }
 
-function jsOutputFileName(jsFile) {
-  const normalized = normalizePath(jsFile);
-  const match = normalized.match(/^assets\/js\/(.+)$/);
+function jsOutputFileNameForPage(htmlFile) {
+  const pageDir = path.dirname(htmlFile);
 
-  if (match) {
-    return `assets/js/${match[1]}`;
+  if (pageDir === ".") {
+    return "assets/js/script.js";
   }
 
-  return `assets/js/${path.basename(normalized)}`;
+  return `assets/js/${normalizePath(pageDir)}/script.js`;
 }
 
 function createPageEntries() {
@@ -83,7 +82,7 @@ function createPageEntries() {
     return {
       htmlFile,
       pageName: toPageName(htmlFile),
-      jsOutput: jsFiles[0] ? jsOutputFileName(jsFiles[0]) : undefined,
+      jsOutput: jsFiles[0] ? jsOutputFileNameForPage(htmlFile) : undefined,
       cssFiles,
       cssOutput: cssOutputFileNameForPage(htmlFile),
     };
@@ -101,7 +100,8 @@ function getHtmlCssLinkFileName(linkTag) {
 }
 
 function getHtmlCssLinks(source) {
-  const linkPattern = /^[ \t]*<link\b(?=[^>]*rel=["']stylesheet["'])(?=[^>]*href=["'][^"']+\.css(?:[?#][^"']*)?["'])[^>]*>[ \t]*\r?\n?/gim;
+  const linkPattern =
+    /^[ \t]*<link\b(?=[^>]*rel=["']stylesheet["'])(?=[^>]*href=["'][^"']+\.css(?:[?#][^"']*)?["'])[^>]*>[ \t]*\r?\n?/gim;
 
   return [...source.matchAll(linkPattern)].map((match, index) => ({
     index,

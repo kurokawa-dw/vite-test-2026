@@ -4,7 +4,7 @@ import handlebars from "vite-plugin-handlebars";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import fg from "fast-glob";
-import { dir } from "./asset-output.config.js";
+import { dir, includeAssetsDir } from "./asset-output.config.js";
 
 const rootDir = path.resolve(__dirname, "src");
 const distDir = path.resolve(__dirname, "dist");
@@ -26,6 +26,15 @@ function normalizeOutputDir(value) {
 }
 
 const assetOutputDir = normalizeOutputDir(dir);
+const assetRootDir = includeAssetsDir ? "assets" : "";
+
+function joinOutputPath(...segments) {
+  return segments.filter(Boolean).join("/");
+}
+
+function getAssetTypeOutputPath(assetType, ...segments) {
+  return joinOutputPath(assetRootDir, assetType, ...segments);
+}
 
 function simpleSSI() {
   let publicDir = path.resolve(__dirname, "public");
@@ -84,17 +93,17 @@ function getAssetOutputPathForPage(htmlFile, assetType, fileName) {
     const relativePageDir = normalizePath(path.relative(assetOutputDir, pageDir));
 
     if (!relativePageDir || relativePageDir === ".") {
-      return `${assetOutputDir}/assets/${assetType}/${fileName}`;
+      return joinOutputPath(assetOutputDir, getAssetTypeOutputPath(assetType, fileName));
     }
 
-    return `${assetOutputDir}/assets/${assetType}/${relativePageDir}/${fileName}`;
+    return joinOutputPath(assetOutputDir, getAssetTypeOutputPath(assetType, relativePageDir, fileName));
   }
 
   if (pageDir === ".") {
-    return `assets/${assetType}/${fileName}`;
+    return getAssetTypeOutputPath(assetType, fileName);
   }
 
-  return `assets/${assetType}/${normalizePath(pageDir)}/${fileName}`;
+  return getAssetTypeOutputPath(assetType, normalizePath(pageDir), fileName);
 }
 
 function cssOutputFileNameForPage(htmlFile) {
@@ -276,6 +285,12 @@ export default defineConfig({
   server: {
     host: "0.0.0.0",
   },
+  css: {
+    devSourcemap: true, // this one
+  },
+  esbuild: {
+    drop: ["console", "debugger"],
+  },
 
   plugins: [
     simpleSSI(),
@@ -289,7 +304,7 @@ export default defineConfig({
   build: {
     outDir: "../dist",
     emptyOutDir: true,
-    assetsDir: "assets",
+    assetsDir: assetRootDir || ".",
     cssCodeSplit: true,
     modulePreload: {
       polyfill: false,
@@ -302,22 +317,22 @@ export default defineConfig({
         entryFileNames: (chunkInfo) => {
           const entry = entryByPageName.get(chunkInfo.name);
 
-          return entry?.jsOutput ?? "assets/js/[name].js";
+          return entry?.jsOutput ?? getAssetTypeOutputPath("js", "[name].js");
         },
-        chunkFileNames: "assets/js/chunks/[name].js",
+        chunkFileNames: getAssetTypeOutputPath("js", "chunks", "[name].js"),
 
         assetFileNames: (assetInfo) => {
           const name = assetInfo.names?.[0] ?? assetInfo.name ?? "";
 
           if (/\.(png|jpe?g|svg|gif|webp|avif|tiff|bmp|ico)$/i.test(name)) {
-            return "assets/images/[name][extname]";
+            return getAssetTypeOutputPath("images", "[name][extname]");
           }
 
           if (/\.(ttf|otf|eot|woff|woff2)$/i.test(name)) {
-            return "assets/fonts/[name][extname]";
+            return getAssetTypeOutputPath("fonts", "[name][extname]");
           }
 
-          return "assets/[name][extname]";
+          return joinOutputPath(assetRootDir, "[name][extname]");
         },
       },
     },
